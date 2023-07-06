@@ -1,0 +1,651 @@
+#update record
+#20221108--invoke-command远程执行命令
+
+#v1.0 FUSEMITECH OAVDESK HEALTHCHECK
+#=========================================  DDC  ===============================================
+[array]$DDCservers = @("AVDDCA01","AVDDCA02")
+$DDC_target_ser=@(,"CitrixBrokerService")
+#Header for Table 1 "DDC服务器状态"
+$DDCfirstheaderName = "DDC服务器"
+$DDCheaderNames  = @("Ping状态", 
+"服务_Citrix Broker Service")
+$DDCheaderWidths = "10","80"
+$DDCtablewidth = 1200
+#=======================================DDC 桌面信息============================================
+$DDCVDfirstheaderName = "DDC总桌面数"
+$DDCVDheaderNames  = @("维护模式桌面","提示","未注册桌面","提示")
+$DDCVDheaderWidths = "10","50"
+$DDCVDtablewidth = 1200
+#========================================  SQL ==================================================
+[array]$SQLservers = @("AVSQLD01","AVSQLD02")
+$SQL_target_ser=@("MSSQL*","SQLAgent*")
+#Header for Table 1 "SQL服务器状态"
+$SQLfirstheaderName = "SQL服务器"
+$SQLheaderNames  = @("Ping状态",
+ "服务_MSSQLSERVER Service",
+ "服务_SQLSERVERAGENT Service")
+$SQLheaderWidths = "10","40","40"
+$SQLtablewidth = 1200
+#=========================================== LIC ================================================
+[array]$LICservers = @("AVSQLD02")
+$LIC_target_ser=@("Citrix Licensing")
+#Header for Table 1 "LIC服务器状态"
+$LICfirstheaderName = "LIC服务器"
+$LICheaderNames  = "Ping状态",
+"服务_Citrix licensing",
+#"服务_Remote Desktop licensing",
+"在用授权",
+"可用授权"
+$LICheaderWidths = "10","20","20","20","20"
+$LICtablewidth = 1200
+#===========================================ALL PVS ================================================
+[array]$PVSservers = @(
+"AVPVSA01","AVPVSA02","AVPVSA03","AVPVSA04","AVPVSA05","AVPVSA06"
+)
+#========================================== PVS =================================================
+[array]$SB1PVSservers = @("AVPVSA01","AVPVSA02","AVPVSA03","AVPVSA04","AVPVSA05","AVPVSA06")
+
+$PVS_target_ser="Soapserver","streamservice","BNTFTP","PVSTSB"
+#Header for Table 1 "PVS连接数检查"
+$PVSfirstheaderName = "PVS服务器"
+$PVSheaderNames  = "Ping状态","Citrix PVS Soap Server",
+"Citrix PVS Stream Service",
+"Citrix PVS TFTP Service",
+"Citrix PVS Two-Stage Boot Service",
+"Device连接数"
+$PVSheaderWidths = "10","16","16","16","16","16"
+$PVStablewidth = 1200
+#========================================== 磁盘空间 ============================================
+[array]$Diskservers = @(
+"AVDDCA01","AVDDCA02"
+"AVSQLD01","AVSQLD02"
+"AVPVSA01","AVPVSA02","AVPVSA03","AVPVSA04","AVPVSA05","AVPVSA06"
+)
+#Header for Table 1 "磁盘空间检查"
+$DiskfirstheaderName = "服务器名称"
+$DiskheaderNames  = "C盘","D盘","E盘"
+$DiskheaderWidths = "30","30","30"
+$Disktablewidth = 1200
+#################################################################################################
+# 定义检查结果存储路径
+$currentDir = Split-Path $MyInvocation.MyCommand.Path
+$resultsHTM = Join-Path $currentDir ("$(get-date -format yyyyMMdd_HH时mm分)OACheckResults.htm")
+#===================================自定义写数据功能=============================================
+Function writeHtmlHeader{
+param($title, $fileName)
+$date = ( Get-Date -format "yyyy年MM月dd日 HH:mm:ss")
+$head = @"
+<html>
+<head>
+<meta http-equiv='Content-Type' content='text/html; charset=iso-8859-1'>
+<title>$title</title>
+<STYLE TYPE="text/css">
+<!--
+td {
+font-family: Arial;
+font-size: 11px;
+
+border-top: 1px solid #999999;
+border-right: 1px solid #999999;
+border-bottom: 1px solid #999999;
+border-left: 1px solid #999999;
+
+padding-top: 2px;
+padding-right: 2px;
+padding-bottom: 2px;
+padding-left: 2px;
+
+overflow: hidden;
+}
+body {
+margin-left: 15px;
+margin-top: 15px;
+margin-right: 0px;
+margin-bottom: 15px;
+table {
+table-layout:fixed; 
+border: thin solid #000000;
+}
+-->
+</style>
+</head>
+<body>
+<table width='1200'>
+<tr bgcolor='#CCCCCC'>
+<td colspan='7' height='48' align='center' valign="middle">
+<font face='Arial' color='#003399' size='4'>
+<strong>$title - $date</strong></font>
+</td>
+</tr>
+</table>
+<br/>
+"@
+#显示$head变量，同时将其写入到目标html文件中，写入的动作主要由out-file命令完成。
+$head | Out-File $fileName
+}
+# ===============================================================================================
+Function writeTableHeader{
+param($fileName, $firstheaderName, $headerNames, $headerWidths, $tablewidth)
+$tableHeader = @"
+<table width='$tablewidth'><tbody>
+<tr bgcolor=#CCCCCC>
+<td width='10%' align='LEFT'><strong>$firstheaderName</strong></td>
+"@
+$i = 0
+while ($i -lt $headerNames.count) {
+	$headerName = $headerNames[$i]
+	$headerWidth = $headerWidths[$i]
+	$tableHeader += "<td width='" + $headerWidth + "%' align='CENTER'><strong>$headerName</strong></td>" 
+	$i++
+}
+$tableHeader += "</tr>"  
+$tableHeader | Out-File $fileName -append
+}
+# ===============================================================================================
+Function writeTableFooter{
+param($fileName)
+"</table><br/>"| Out-File $fileName -append}
+# ===============================================================================================
+Function PingSvcCnW{
+param($Servers,$Services,$fileName)
+Foreach($server in $Servers){
+    $Server
+    $tableEntry = "<tr>"
+    $tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'> $server </font></td>")
+    $results = Get-WmiObject -query "SELECT * FROM Win32_PingStatus WHERE Address = '$server'" 
+    $RT = $results.ResponseTime 
+    $TTL = $results.ResponseTimeToLive 
+    if ($results.StatusCode -eq 0) {
+       if ($TTL -ge 98 -and $TTL -le 128) 
+           {$tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'>RT=$RT ms, TTL=$TTL </font></td>")}
+       else 
+           {$tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'>RT=$RT ms, TTL=$TTL </font></td>")} } 
+    else { 
+       Write-Host "$server Ping failed!" -ForegroundColor Red 
+       $tableEntry += ("<td bgcolor='#FF0000' align=LEFT><font color='#FFFFFF'><strong>Ping failed! </strong></font></td>") } 
+    Foreach($Service in $Services){
+     $Service
+     try{
+           #$results=Get-WmiObject win32_service -ComputerName $server|where-object{$_.name -like "$Service"} 
+           $results=Get-Service -ComputerName $server|where-object{$_.name -like $Service}     
+           $name=$results.name
+           $status=$results.status
+           $state=$results.status
+           $startmode=$results.startmode
+        if ($state -eq "Running")
+           {Write-Host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor green
+           $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> $state </font></td>")}
+        elseif ($state -eq "Stopped")
+           {Write-Host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor red
+           $tableEntry += ("<td bgcolor='#FF0000' align=center><font color='#FFFFFF'> $state </font></td>")}
+        elseif ($state -eq $null)
+           {Write-Host "未检测到 $service 服务"  -ForegroundColor red
+           $tableEntry += ("<td bgcolor='#FF7F00' align=center><font color='#FFFFFF'> 未检测到此服务 </font></td>")}
+        else
+           {Write-host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor red
+           $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> $state </font></td>")}
+        }
+     Catch [System.UnauthorizedAccessException]{
+        Write-Host "访问失败。错误原因："$Error[0]  -ForegroundColor red
+        $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> $server 拒绝访问1 </font></td>")
+        }
+     Catch [System.GetWMIManagementException]{
+        Write-Host "访问失败。错误原因："$Error[0]  -ForegroundColor red
+        $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> $server 拒绝访问2 </font></td>")
+        }
+     }
+    $tableentry
+    $tableEntry +="</tr>"
+    $tableEntry | Out-File $fileName -append #将tableEntry的值全部写入用来保存信息的html文件中
+    Write-host "$server 信息写入完成"
+   }
+}
+#================================================================================================
+Function WritePVSLog{
+param ($server,$filename,$targetlog)
+$glog=@(Get-EventLog -ComputerName $server -LogName $targetlog -Source "Streamprocess" -InstanceId 11 -After $(GET-DATE -Format D))
+$tableHeader = "<table width='1200'><tbody><tr bgcolor=#CCCCCC><td width='40%' align='LEFT'>$server 的 StreamProcess的事件ID为11的告警日志</td>"
+$logcount=$glog.Count
+$logcount
+if ($glog.Count -eq 0)
+    {$tableHeader += ("<td width='60%' align='Center'><font color='#003399'> 今日无告警记录 </font></td>")
+    $tableHeader += "</tr>"}
+else
+    {$tableHeader += ("<td bgcolor='#FF0000' width='60%' align='Center'><font color='#FFFFFF'> 今日有ID为11的告警记录，数量为$logcount </font></td>")
+    $tableHeader += "</tr>"}
+$tableHeader | Out-File $Filename -append
+Write-Host "$server StreamProcess事件ID为11的日志告警写入完成"
+}
+#================================================================================================
+Function WriteSFLog{
+param ($server,$filename,$targetlog)
+$glog=@(Get-EventLog -ComputerName $server -LogName $targetlog -InstanceId 4003 -EntryType error -After $(GET-DATE -Format D))
+$tableHeader = "<table width='1200'><tbody><tr bgcolor=#CCCCCC><td width='40%' align='LEFT'>$server 上 $targetlog 错误告警</td>"
+[int]$logcount=$glog.Count
+$logcount
+if ([int]$logcount -eq 0)
+    {$tableHeader += ("<td width='60%' align='Center'><font color='#003399'> 今日无告警记录 </font></td>")
+    $tableHeader += "</tr>"}
+else
+    {$tableHeader += ("<td bgcolor='#FF0000' width='60%' align='Center'><font color='#FFFFFF'> 今日有告警记录，数量为$logcount  </font></td>")
+    $tableHeader += "</tr>"}
+$tableHeader | Out-File $Filename -append
+Write-Host "$server $targetlog 日志错误告警写入完成"
+}
+#================================================================================================
+Function WriteSQLLog{
+param ($server,$filename,$targetlog)
+$glog=@(Get-EventLog -ComputerName $server -LogName $targetlog -Source "MSSQLSERVER" -EntryType error -After $(GET-DATE -Format D))
+$tableHeader = "<table width='1200'><tbody><tr bgcolor=#CCCCCC><td width='40%' align='LEFT'>$server 的 MSSQLSERVER 错误告警</td>"
+$logcount=$glog.Count
+$logcount
+if ($glog.Count -eq 0)
+    {$tableHeader += ("<td width='60%' align='Center'><font color='#003399'> 今日无告警记录 </font></td>")
+    $tableHeader += "</tr>"}
+else
+    {$tableHeader += ("<td bgcolor='#FF0000' width='60%' align='Center'><font color='#FFFFFF'> 今日有告警记录，数量为$logcount </font></td>")
+    $tableHeader += "</tr>"}
+$tableHeader | Out-File $Filename -append
+Write-Host "$server MSSQLSERVER日志错误告警写入完成"
+}
+# ===============================================================================================
+Function DiskCnW{
+param($Servers,$Filename)
+foreach ($server in $Servers)    
+{
+    $server
+    $tableEntry ="<tr>"
+    $tableEntry +=("<td bgcolor='#CCCCCC' align=Left><font color='#003399'> $server </font></td>")
+    #$alldiskinfo=Get-WmiObject win32_logicaldisk -ComputerName $server |?{$_.drivetype -eq 3}
+    $alldiskinfo= Invoke-Command -ScriptBlock    {Get-WmiObject win32_logicaldisk  |?{$_.drivetype -eq 3}} -ComputerName $server
+
+    $diskc=$alldiskinfo |?{$_.deviceid -eq "C:"}
+    $diskd=$alldiskinfo |?{$_.deviceid -eq "D:"}
+    $diske=$alldiskinfo |?{$_.deviceid -eq "E:"}
+
+    if ($diskc -eq $null)
+        {$tableEntry +=("<td bgcolor='#CCCCCC' align=Center><font color='#003399'> 无C盘 </font></td>")}
+    else{
+      $Freespace='{0:n1}' -f ($diskc.freespace/1024/1024/1024)
+      $Freespace
+      $usagerate='{0:p0}' -f (($diskc.size-$diskc.freespace)/$diskc.size)
+      $usagerate
+      if ([int]$Freespace -le 5)
+         {$tableEntry +=("<td bgcolor='#FF0000' align=Center><font color='#FFFFFF'> 已用$usagerate，剩余$Freespace GB </font></td>")}
+      else
+         {$tableEntry +=("<td bgcolor='#CCCCCC' align=Center><font color='#003399'> 已用$usagerate，剩余$Freespace GB </font></td>")}
+    }
+
+    if ($diskd -eq $null)
+        {$tableEntry +=("<td bgcolor='#CCCCCC' align=Center><font color='#003399'> 无D盘 </font></td>")}
+    else{
+      $Freespace='{0:n1}' -f ($diskd.freespace/1024/1024/1024)
+      $Freespace
+      $usagerate='{0:p0}' -f (($diskd.size-$diskd.freespace)/$diskd.size)
+      $usagerate
+      if ([int]$Freespace -le 5)
+         {$tableEntry +=("<td bgcolor='#FF0000' align=Center><font color='#FFFFFF'> 已用$usagerate，剩余$Freespace GB </font></td>")}
+      else
+         {$tableEntry +=("<td bgcolor='#CCCCCC' align=Center><font color='#003399'> 已用$usagerate，剩余$Freespace GB </font></td>")}
+    }
+    
+    if ($diske -eq $null)
+        {$tableEntry +=("<td bgcolor='#CCCCCC' align=Center><font color='#003399'> 无E盘 </font></td>")}
+    else{
+      $Freespace='{0:n1}' -f ($diske.freespace/1024/1024/1024)
+      $Freespace
+      $usagerate='{0:p0}' -f (($diske.size-$diske.freespace)/$diske.size)
+      $usagerate
+      if ([int]$Freespace -le 5)
+         {$tableEntry +=("<td bgcolor='#FF0000' align=Center><font color='#FFFFFF'> 已用$usagerate，剩余$Freespace GB </font></td>")}
+      else
+         {$tableEntry +=("<td bgcolor='#CCCCCC' align=Center><font color='#003399'> 已用$usagerate，剩余$Freespace GB </font></td>")}
+    }
+
+    $tableEntry | Out-File $fileName -Append
+    Write-Host "写入$server 服务器磁盘状态信息"
+    }
+}
+# ===============================================================================================
+Function LICCnW{
+param ($servers,$services,$filename)
+foreach ($server in $servers)
+    {
+    $tableEntry = "<tr>"
+    $tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'> $server </font></td>")
+    $results = Get-WmiObject -query "SELECT * FROM Win32_PingStatus WHERE Address = '$server'" 
+    $RT = $results.ResponseTime 
+    $TTL = $results.ResponseTimeToLive 
+    if ($results.StatusCode -eq 0) {
+       if ($TTL -ge 98 -and $TTL -le 128) 
+           {$tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'>RT=$RT ms, TTL=$TTL </font></td>")}
+       else 
+           {$tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'>RT=$RT ms, TTL=$TTL </font></td>")} } 
+    else { 
+       Write-Host "$server Ping failed!" -ForegroundColor Red 
+       $tableEntry += ("<td bgcolor='#FF0000' align=LEFT><font color='#FFFFFF'> <strong>Ping failed! </strong></font></td>") } 
+    foreach($service in $services)
+        {
+            $results=Get-WmiObject win32_service -ComputerName $Server|where-object{$_.name -eq "$Service"}       
+            $name=$results.name
+            $status=$results.status
+            $state=$results.state
+            $startmode=$results.startmode
+            if ($state -eq "Running")
+               {Write-Host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor green
+               $tableEntry += ("<td bgcolor='#CCCCCC' align=Center><font color='#003399'>$state</font></td>")}
+            elseif ($state -eq "Stopped")
+               {Write-Host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor red
+               $tableEntry += ("<td bgcolor='#FF0000' align=Center><font color='#FFFFFF'>$state</font></td>")}
+            elseif ($state -eq $null)
+               {Write-Host "未检测到 $service 服务"  -ForegroundColor red
+               $tableEntry += ("<td bgcolor='#FF0000' align=Center><font color='#FFFFFF'>未检测到此服务</font></td>")}
+            else
+               {Write-host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor red
+               $tableEntry += ("<td bgcolor='#CCCCCC' align=Center><font color='#003399'>$state</font></td>")}
+         }
+    $alllic=(Get-WmiObject -class "Citrix_GT_License_Pool" -Namespace "ROOT\CitrixLicensing" -ComputerName $server | where-object {$_.PLD -eq "XDT_ENT_UD"} | Measure-Object -Property Count -sum).Sum
+    $alllic
+    $usinglic=(Get-WmiObject -class "Citrix_GT_License_Pool" -Namespace "ROOT\CitrixLicensing" -ComputerName $server | where-object {$_.PLD -eq "XDT_ENT_UD"} | Measure-Object -Property InUseCount -sum).Sum
+    $usinglic
+    $available=$alllic-$usinglic
+    $available
+    $tableEntry +=("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'> $usinglic (在用) / $alllic (总数) </font></td>")
+    $tableEntry +=("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'> $available </font></td>")
+    $tableEntry +=("</tr>")
+$tableEntry
+$tableEntry | Out-File $filename -Append
+Write-Host "写入$server 授权服务器情况完成"
+}
+}
+# ===============================================================================================
+Function PVSCnW{
+param($servers,$services,$DBServer,$DBServerfailover,$DBname,$filename)
+ $ii=0
+ # 创建数据库连接串
+ $SqlConn = [System.Data.SqlClient.SqlConnection] "Data Source=$DBServer;Initial Catalog=$DBname;Integrated Security=SSPI;"
+ # 打开数据库连接
+ $SqlConn.Open()
+ # 确认状态
+ $SqlConn.State;
+ # 创建一个绑定到此连接的SqlCommand对象.
+ $CC = $SqlConn.CreateCommand();
+foreach ($server in $servers)
+    {
+    $server
+    $tableEntry = "<tr>"
+    $tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'> $server </font></td>")
+    $results = Get-WmiObject -query "SELECT * FROM Win32_PingStatus WHERE Address = '$server'" 
+    $RT = $results.ResponseTime 
+    $TTL = $results.ResponseTimeToLive 
+    if ($results.StatusCode -eq 0) {
+       if ($TTL -ge 98 -and $TTL -le 128) 
+           {$tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'>RT=$RT ms, TTL=$TTL </font></td>")}
+       else 
+           {$tableEntry += ("<td bgcolor='#CCCCCC' align=LEFT><font color='#003399'>RT=$RT ms, TTL=$TTL </font></td>")} } 
+    else { 
+       Write-Host "$server Ping failed!" -ForegroundColor Red 
+       $tableEntry += ("<td bgcolor='#FF0000' align=LEFT><font color='#FFFFFF'><strong> Ping failed!</strong></font></td>") } 
+    $tableEntry
+    foreach($service in $services)
+     {
+     $Service
+     try{
+           #$results=Get-WmiObject win32_service -ComputerName $server|where-object{$_.name -eq "$Service"}
+           $results=Get-Service -ComputerName $server|where-object{$_.name -like $Service}       
+           $name=$results.name
+           $status=$results.status
+           $state=$results.status
+           $startmode=$results.startmode
+        if ($state -eq "Running")
+           {Write-Host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor green
+           $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> $state </font></td>")}
+        elseif ($state -eq "Stopped")
+           {Write-Host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor red
+           $tableEntry += ("<td bgcolor='#FF0000' align=center><font color='#FFFFFF'> $state </font></td>")}
+        elseif ($state -eq $null)
+           {Write-Host "未检测到 $service 服务"  -ForegroundColor red
+           $tableEntry += ("<td bgcolor='#FF7F00' align=center><font color='#FFFFFF'> 未检测到此服务 </font></td>")}
+        else
+           {Write-host "$service 的状态是 $state ,启动模式是 $startmode "  -ForegroundColor red
+           $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> $state </font></td>")}
+        }
+     Catch [System.UnauthorizedAccessException]{
+        Write-Host "访问失败。错误原因："$Error[0]  -ForegroundColor red
+        $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'> 访问失败。错误原因：$Error[0] </font></td>")
+        }
+    }
+   $server
+    #获取目标服务器IP地址$ipV4 = '192.168.12.33'
+    $ipv4=[net.dns]::GetHostAddresses($server) | select -ExpandProperty IPAddressToString
+    #将分段的ip转为二进制格式
+    $ipv4in2=-join ($ipV4.Split('.') | ForEach-Object {[System.Convert]::ToString($_,2).PadLeft(8,'0')})
+    $ipv4in10= [Convert]::ToInt32($ipv4in2,2)
+    write-host "$server 服务器的IP地址用10进制表示为 $ipv4in10"
+
+    # 定义查询命令
+    #$CC.CommandText = "SELECT top $ii devicecount from [CTXPVS61DB].[dbo].[ServerStatus] order by [ip] asc"
+    $CC.CommandText = "SELECT devicecount from [$DBname].[dbo].[ServerStatus] WHERE ip=$ipv4in10"
+
+    # 因为这是一个标量结果, 因此调用ExecuteScalar即可
+    try{
+        $queryresult=$CC.ExecuteScalar();
+        Write-Host "$server 的连接数为 $queryresult"
+        $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+    }
+    catch{
+         # 创建数据库连接串
+         $SqlConn = [System.Data.SqlClient.SqlConnection] "Data Source=$DBServerfailover;Initial Catalog=$DBname;Integrated Security=SSPI;"
+         # 打开数据库连接
+         $SqlConn.Open()
+         # 确认状态
+         $SqlConn.State;
+         # 创建一个绑定到此连接的SqlCommand对象.
+         $CC = $SqlConn.CreateCommand();
+         $CC.CommandText = "SELECT devicecount from [$DBname].[dbo].[ServerStatus] WHERE ip=$ipv4in10"
+         try{
+            $queryresult=$CC.ExecuteScalar();
+            Write-Host "$server 的连接数为 $queryresult"
+            $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+            }
+         catch{
+            $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'> 数据库查询失败 </font></td>")
+            Write-Host "数据库查询失败"
+         }
+         }
+   
+    $tableEntry += "</tr>"
+    $tableEntry |Out-File $filename -Append
+    }
+ $SqlConn.Close()
+}
+# ===============================================================================================
+Function DDCVD{
+param($DBServer,$DBServerfailover,$DBname,$filename)
+$DBserver
+$DBServerfailover
+$DBname
+$filename
+$tableEntry = "<tr>"
+try{
+
+       $SqlConn = [System.Data.SqlClient.SqlConnection] "Data Source=$DBServer;Initial Catalog=$DBname;Integrated Security=SSPI;"
+       $SqlConn.Open()
+       $SqlConn.State;
+
+       $CC = $SqlConn.CreateCommand()
+
+#获取所有桌面数量
+       $CC.CommandText = "SELECT count(*) from [$DBname].[chb_state].[workers]" 
+       [array]$queryresult=$CC.ExecuteScalar()
+       Write-Host "目前总桌面数量为 $queryresult"
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+#获取处于维护模式的桌面数量
+       $CC.CommandText = "SELECT Count(*) from [$DBname].[chb_state].[workers] WHERE inMaintenanceMode=1" 
+       $queryresult=$CC.ExecuteScalar()
+       Write-Host "目前处于维护模式的桌面数量为 $queryresult"
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+       if ($queryresult -gt 0){
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>检测到处于【维护模式】的虚拟机</font></td>")
+       }
+       else{
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'></font></td>")
+       }
+      
+#获取未注册桌面数量	
+	   $CC.CommandText = "SELECT Count(*) from [$DBname].[chb_state].[workers] WHERE RegistrationState=0" 
+       $queryresult=$CC.ExecuteScalar()
+       Write-Host "目前未注册桌面数量为 $queryresult"
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+       if ($queryresult -gt 0){
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>检测到未注册桌面</font></td>")
+       }
+       else{
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'></font></td>")
+       }
+	   $SqlConn.Close()
+       $SqlConn.State;
+   }
+catch
+{
+       $SqlConn = [System.Data.SqlClient.SqlConnection] "Data Source=$DBServerfailover;Initial Catalog=$DBname;Integrated Security=SSPI;"
+       $SqlConn.Open()
+       $SqlConn.State;
+
+       $CC = $SqlConn.CreateCommand()
+
+#获取所有桌面数量
+       $CC.CommandText = "SELECT count(*) from [$DBname].[chb_state].[workers]" 
+       [array]$queryresult=$CC.ExecuteScalar()
+       Write-Host "目前总桌面数量为 $queryresult"
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+#获取处于维护模式的桌面数量
+       $CC.CommandText = "SELECT Count(*) from [$DBname].[chb_state].[workers] WHERE inMaintenanceMode=1" 
+       $queryresult=$CC.ExecuteScalar()
+       Write-Host "目前处于维护模式的桌面数量为 $queryresult"
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+       if ($queryresult -gt 0){
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>检测到处于【维护模式】的虚拟机</font></td>")
+       }
+       else{
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'></font></td>")
+       }
+ ##      $SqlConn.Close()
+ ##      $SqlConn.State;
+	   
+	   #获取未注册桌面数量	
+	   $CC.CommandText = "SELECT Count(*) from [$DBname].[chb_state].[workers] WHERE RegistrationState=0" 
+       $queryresult=$CC.ExecuteScalar()
+       Write-Host "目前未注册桌面数量为 $queryresult"
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>$queryresult</font></td>")
+       if ($queryresult -gt 0){
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'>检测到未注册桌面</font></td>")
+       }
+       else{
+       $tableEntry += ("<td bgcolor='#66CDAA' align=Center><font color='#FFFFFF'></font></td>")
+       }
+	   $SqlConn.Close()
+       $SqlConn.State;
+}
+$tableEntry +="</tr>"
+$tableEntry | Out-File $filename -Append
+}
+# ===============================================================================================
+Function writeHtmlFooter{
+param($fileName)
+@"
+<table width='1200'>
+<tr bgcolor='#CCCCCC'>
+<td colspan='7' height='30' align='right' valign="middle">
+<font face='Kristen ITC' color='#000000' size='3' align='right'><strong>By MIS程杰</strong></font>
+</td>
+</tr>
+</table>
+</body>
+</html>
+"@ | Out-File $FileName -append
+}
+#################################################################################################
+# ======================开始执行检查服务器状态,将所有结果写入一个HTM文件=========================
+writeHtmlHeader "Fullsemitech OAVDI HealthCheck" $resultsHTM
+#  DDC检查 =======================================================================================
+Write-Host ("Saving DDC Results To Html Report")
+writeTableHeader $resultsHTM $DDCFirstheaderName $DDCHeaderNames $DDCHeaderWidths $DDCTablewidth
+PingSvcCnW $DDCServers $DDC_target_Ser $resultsHTM
+writeTableFooter $resultsHTM
+#  DDC桌面信息检查===============================================================================
+writeTableHeader $resultsHTM $DDCVDFirstheaderName $DDCVDHeaderNames $DDCVDHeaderWidths $DDCVDTablewidth
+DDCVD "AVSQLD01" "AVSQLD02" "CitrixFYCitrixSite" $resultsHTM
+
+writeTableFooter $resultsHTM
+#  SQL检查 =======================================================================================
+Write-Host ("Saving SQL Results To Html Report")
+writeTableHeader $resultsHTM $SQLFirstheaderName $SQLHeaderNames $SQLHeaderWidths $SQLTablewidth
+PingSvcCnW $SQLServers $SQL_target_Ser $resultsHTM
+writeTableFooter $resultsHTM
+#  PVS检查=======================================================================================
+writetableheader $resultsHTM $PVSFirstheaderName $PVSHeaderNames $PVSHeaderWidths $PVSTablewidth
+PVSCnW $SB1PVSservers $PVS_target_ser "AVSQLD01" "AVSQLD02" "CitrixProvisioning" $resultsHTM
+writeTableFooter $resultsHTM
+#  LIC检查=======================================================================================
+Write-Host ("Saving LIC Results To Html Report ")
+writeTableHeader $resultsHTM $LICFirstheaderName $LICHeaderNames $LICHeaderWidths $LICTablewidth
+LICCnW $LICservers $LIC_target_ser $resultsHTM
+writeTableFooter $resultsHTM
+#  服务器磁盘检查================================================================================
+Write-Host ("Saving Diskinfo Results To Html Report")
+writeTableHeader $resultsHTM $diskFirstheaderName $diskHeaderNames $diskHeaderWidths $diskTablewidth
+DiskCnW $Diskservers $resultsHTM
+writeTableFooter $resultsHTM
+#  PVS Streamprocess hungthread日志===============================================================
+#Write-Host ("Saving PVS hungthread log Results To Html Report")
+#ForEach ($server in $PVSservers)
+#{writePVSlog $server $resultsHTM "Application"}
+#writeTableFooter $resultsHTM
+#  SQL错误日志====================================================================================
+Write-Host ("Saving SQL error log Results To Html Report")
+ForEach ($server in $SQLservers)
+{writeSQLlog $server $resultsHTM "Application"}
+writeTableFooter $resultsHTM
+#=================================================================================================
+writeHtmlFooter $resultsHTM
+
+##################################################################################################
+#======================================检查报告通过邮件发送=======================================
+#mail server configuration-----------------------------邮件服务器配置
+    $smtpServer = "mail.fullsemitech.com"
+    $smtpUser = "it.service@fullsemitech.com"
+    $smtpPassword = "fuxin@2021"
+#create the mail message-------------------------------创建邮件信息
+    $mail = New-Object System.Net.Mail.MailMessage
+#set the addresses-------------------------------------配置邮件地址
+    $MailAddress="jie.cheng@fullsemitech.com"
+    $MailtoAddress="pillar.jin@fullsemitech.com,eric.xia@fullsemitech.com,fiora.fang@fullsemitech.com,jie.cheng@fullsemitech.com,zhan.li@fullsemitech.com,kai.li@fullsemitech.com"
+    $mail.From = New-Object System.Net.Mail.MailAddress($MailAddress)
+    $mail.To.Add($MailtoAddress)
+#set the content---------------------------------------配置邮件内容
+    $mail.Subject =  "$(GET-DATE -Format yyyyMMdd_HH时mm分)Fullsemitech OA-VDI HealthCheck";
+    $mail.Priority  = "High"
+    $mail.Body = "
+    尊敬的管理员，
+
+         您好，$(Get-Date)巡检结果请见附件html文件
+
+    谢谢!
+    " 
+    $filename="$resultsHTM"
+    $attachment = new-Object System.Net.Mail.Attachment($filename)
+    $mail.Attachments.Add($attachment)
+#send the message--------------------------------------发送邮件信息
+    $smtp = New-Object System.Net.Mail.SmtpClient -argumentList $smtpServer
+    $smtp.Credentials = New-Object System.Net.NetworkCredential -argumentList $smtpUser,$smtpPassword
+try
+{
+    $smtp.Send($mail)
+    Write-Host  "$MailtoAddress 邮件发送成功！" -ForegroundColor Green
+}
+catch
+{
+    Write-Host  "$MailtoAddress 邮件发送失败！" -ForegroundColor Red
+}
+Exit
